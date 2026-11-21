@@ -1,286 +1,331 @@
 
--- =====================================================
--- MEDIKACARE | DIGITALISASI RUMAH SAKIT
--- DATABASE: digitalisasi_rumah_sakit
--- DBMS: PostgreSQL
--- =====================================================
+-- =============================================================
+-- MEDCARE HOSPITAL | DIGITALISASI RUMAH SAKIT
+-- DBMS       : PostgreSQL
+-- Tujuan     : Database sesuai dengan kode aplikasi Next.js
+-- =============================================================
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-
--- =====================================================
+-- =============================================================
 -- 1. TABEL POLI
--- Menyimpan data poli rumah sakit
--- =====================================================
+-- Menyimpan daftar layanan/poli rumah sakit.
+-- Contoh: Poli Umum, Poli Gigi, Poli Anak.
+-- =============================================================
 
 CREATE TABLE IF NOT EXISTS poli (
-    id_poli BIGSERIAL PRIMARY KEY,
-    nama_poli VARCHAR(100) NOT NULL UNIQUE,
-    deskripsi TEXT,
-    url_ikon TEXT,
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    image_url TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
--- =====================================================
--- 2. TABEL PENGGUNA
--- Menyimpan data admin, dokter, dan pasien
--- =====================================================
 
-CREATE TABLE IF NOT EXISTS pengguna (
-    id_pengguna BIGSERIAL PRIMARY KEY,
-    nama_pengguna VARCHAR(80) NOT NULL,
-    email VARCHAR(160) NOT NULL UNIQUE,
-    hash_kata_sandi TEXT NOT NULL,
+-- =============================================================
+-- 2. TABEL USERS
+-- Menyimpan akun admin, dokter, dan pasien.
+-- Tabel ini digunakan ketika registrasi dan login.
+-- =============================================================
 
-    peran VARCHAR(20) NOT NULL
-        CHECK (peran IN ('admin', 'dokter', 'pasien')),
+CREATE TABLE IF NOT EXISTS users (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    full_name VARCHAR(120) NOT NULL,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
 
-    id_poli BIGINT,
+    role VARCHAR(20) NOT NULL
+        CHECK (role IN ('admin', 'doctor', 'patient')),
 
-    nama_lengkap VARCHAR(150),
-    nomor_telepon VARCHAR(30),
-    alamat TEXT,
+    poli_id BIGINT REFERENCES poli(id) ON DELETE SET NULL,
+    phone VARCHAR(30),
+    str_number VARCHAR(50),
+    doctor_verification_status VARCHAR(20) NOT NULL DEFAULT 'approved',
+    bio TEXT,
+    image_url TEXT,
+    experience VARCHAR(80),
 
-    status_aktif BOOLEAN NOT NULL DEFAULT TRUE,
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT fk_pengguna_poli
-        FOREIGN KEY (id_poli)
-        REFERENCES poli(id_poli)
-        ON DELETE SET NULL
+    CONSTRAINT chk_doctor_must_have_poli
+        CHECK (
+            (role = 'doctor' AND poli_id IS NOT NULL)
+            OR role <> 'doctor'
+        )
+);
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS str_number VARCHAR(50);
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS doctor_verification_status VARCHAR(20) NOT NULL DEFAULT 'approved';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_doctor_str_number
+ON users (str_number)
+WHERE role = 'doctor' AND str_number IS NOT NULL;
+
+
+
+-- =============================================================
+-- 3. TABEL DOCTOR_SCHEDULES
+-- Menyimpan jadwal praktik dokter.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS doctor_schedules (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    doctor_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    day_of_week SMALLINT NOT NULL
+        CHECK (day_of_week BETWEEN 0 AND 6),
+
+    start_time TIME NOT NULL,
+
+    duration_minutes SMALLINT NOT NULL DEFAULT 30
+        CHECK (duration_minutes = 30),
+
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_doctor_schedule
+        UNIQUE (doctor_id, day_of_week, start_time)
 );
 
 
--- =====================================================
--- 3. TABEL JADWAL DOKTER
--- Menyimpan jadwal praktik dokter
--- =====================================================
 
-CREATE TABLE IF NOT EXISTS jadwal_dokter (
-    id_jadwal BIGSERIAL PRIMARY KEY,
+-- =============================================================
+-- 4. TABEL APPOINTMENTS
+-- Menyimpan janji temu atau pendaftaran pemeriksaan pasien.
+-- =============================================================
 
-    id_dokter BIGINT NOT NULL,
+CREATE TABLE IF NOT EXISTS appointments (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    hari VARCHAR(12) NOT NULL
-        CHECK (hari IN (
-            'Senin',
-            'Selasa',
-            'Rabu',
-            'Kamis',
-            'Jumat',
-            'Sabtu',
-            'Minggu'
-        )),
+    patient_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE RESTRICT,
 
-    waktu_mulai TIME NOT NULL,
+    doctor_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE RESTRICT,
 
-    durasi_menit INT NOT NULL DEFAULT 30
-        CHECK (durasi_menit = 30),
+    schedule_id BIGINT NOT NULL
+        REFERENCES doctor_schedules(id) ON DELETE RESTRICT,
 
-    status_aktif BOOLEAN NOT NULL DEFAULT TRUE,
+    booking_date DATE NOT NULL,
+    complaint TEXT NOT NULL,
 
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (
+            status IN (
+                'pending',
+                'approved',
+                'rejected',
+                'completed',
+                'cancelled'
+            )
+        ),
 
-    CONSTRAINT fk_jadwal_dokter_pengguna
-        FOREIGN KEY (id_dokter)
-        REFERENCES pengguna(id_pengguna)
-        ON DELETE CASCADE,
+    rejection_reason TEXT,
 
-    CONSTRAINT unik_jadwal_dokter
-        UNIQUE (id_dokter, hari, waktu_mulai)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_patient_is_not_doctor
+        CHECK (patient_id <> doctor_id)
 );
 
 
--- =====================================================
--- 4. TABEL OBAT
--- Menyimpan data obat dan stok farmasi
--- =====================================================
+-- =============================================================
+-- 5. INDEX APPOINTMENTS
+-- Mempercepat pencarian dan mencegah pemesanan slot ganda.
+-- =============================================================
 
-CREATE TABLE IF NOT EXISTS obat (
-    id_obat BIGSERIAL PRIMARY KEY,
+CREATE UNIQUE INDEX IF NOT EXISTS uq_appointment_active_slot
+ON appointments (schedule_id, booking_date)
+WHERE status IN ('pending', 'approved', 'completed');
 
-    nama_obat VARCHAR(150) NOT NULL UNIQUE,
-    deskripsi TEXT,
+CREATE INDEX IF NOT EXISTS idx_appointments_doctor_status
+ON appointments (doctor_id, status);
 
-    jenis_obat VARCHAR(20) NOT NULL
-        CHECK (jenis_obat IN ('keras', 'biasa')),
-
-    stok INT NOT NULL DEFAULT 0
-        CHECK (stok >= 0),
-
-    url_gambar TEXT,
-    tanggal_kedaluwarsa DATE,
-
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+CREATE INDEX IF NOT EXISTS idx_appointments_patient_created
+ON appointments (patient_id, created_at DESC);
 
 
--- =====================================================
--- 5. TABEL JANJI_TEMU
--- Menyimpan pendaftaran pemeriksaan pasien
--- =====================================================
+-- =============================================================
+-- 6. TABEL MEDICAL_RECORDS
+-- Menyimpan hasil pemeriksaan pasien oleh dokter.
+-- =============================================================
 
-CREATE TABLE IF NOT EXISTS janji_temu (
-    id_janji BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS medical_records (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    id_pasien BIGINT NOT NULL,
-    id_dokter BIGINT NOT NULL,
-    id_jadwal BIGINT NOT NULL,
+    appointment_id BIGINT NOT NULL UNIQUE
+        REFERENCES appointments(id) ON DELETE RESTRICT,
 
-    tanggal_janji DATE NOT NULL,
-    keluhan TEXT NOT NULL,
+    patient_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE RESTRICT,
 
-    status VARCHAR(20) NOT NULL DEFAULT 'Pending'
-        CHECK (status IN (
-            'Pending',
-            'Approved',
-            'Rejected',
-            'Selesai',
-            'Cancelled'
-        )),
-
-    alasan_penolakan TEXT,
-
-    id_validator BIGINT,
-
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    diperbarui_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT fk_janji_pasien
-        FOREIGN KEY (id_pasien)
-        REFERENCES pengguna(id_pengguna),
-
-    CONSTRAINT fk_janji_dokter
-        FOREIGN KEY (id_dokter)
-        REFERENCES pengguna(id_pengguna),
-
-    CONSTRAINT fk_janji_jadwal
-        FOREIGN KEY (id_jadwal)
-        REFERENCES jadwal_dokter(id_jadwal),
-
-    CONSTRAINT fk_janji_validator
-        FOREIGN KEY (id_validator)
-        REFERENCES pengguna(id_pengguna)
-);
-
-
--- =====================================================
--- 6. INDEX JANJI_TEMU
--- Mempercepat pencarian data janji temu
--- =====================================================
-
-CREATE INDEX IF NOT EXISTS idx_janji_pasien_dibuat
-    ON janji_temu (id_pasien, dibuat_pada DESC);
-
-CREATE INDEX IF NOT EXISTS idx_janji_dokter_status_tanggal
-    ON janji_temu (id_dokter, status, tanggal_janji);
-
-
--- =====================================================
--- 7. TABEL REKAM_MEDIS
--- Menyimpan riwayat pemeriksaan pasien
--- =====================================================
-
-CREATE TABLE IF NOT EXISTS rekam_medis (
-    id_rekam_medis BIGSERIAL PRIMARY KEY,
-
-    id_janji BIGINT NOT NULL UNIQUE,
-    id_pasien BIGINT NOT NULL,
-    id_dokter BIGINT NOT NULL,
+    doctor_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE RESTRICT,
 
     diagnosis TEXT NOT NULL,
-    tindakan_medis TEXT NOT NULL,
-    catatan TEXT NOT NULL,
+    medical_action TEXT NOT NULL,
+    notes TEXT,
 
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT fk_rekam_janji
-        FOREIGN KEY (id_janji)
-        REFERENCES janji_temu(id_janji),
-
-    CONSTRAINT fk_rekam_pasien
-        FOREIGN KEY (id_pasien)
-        REFERENCES pengguna(id_pengguna),
-
-    CONSTRAINT fk_rekam_dokter
-        FOREIGN KEY (id_dokter)
-        REFERENCES pengguna(id_pengguna)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
--- =====================================================
--- 8. TABEL RESEP
--- Menyimpan resep obat pasien
--- =====================================================
 
-CREATE TABLE IF NOT EXISTS resep (
-    id_resep BIGSERIAL PRIMARY KEY,
+-- =============================================================
+-- 7. TABEL MEDICINES
+-- Menyimpan data obat dan stok bagian farmasi.
+-- =============================================================
 
-    id_rekam_medis BIGINT NOT NULL,
-    id_obat BIGINT NOT NULL,
+CREATE TABLE IF NOT EXISTS medicines (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    jumlah INT NOT NULL
-        CHECK (jumlah > 0),
+    name VARCHAR(150) NOT NULL UNIQUE,
+    description TEXT,
 
-    status VARCHAR(30) NOT NULL DEFAULT 'Menunggu Diproses'
-        CHECK (status IN (
-            'Menunggu Diproses',
-            'Siap Diambil',
-            'Sudah Diambil'
-        )),
+    medicine_type VARCHAR(20) NOT NULL
+        CHECK (medicine_type IN ('ordinary', 'prescription')),
 
-    disiapkan_pada TIMESTAMPTZ,
-    diambil_pada TIMESTAMPTZ,
+    stock INTEGER NOT NULL DEFAULT 0
+        CHECK (stock >= 0),
 
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at DATE,
+    image_url TEXT,
 
-    CONSTRAINT fk_resep_rekam_medis
-        FOREIGN KEY (id_rekam_medis)
-        REFERENCES rekam_medis(id_rekam_medis),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
 
-    CONSTRAINT fk_resep_obat
-        FOREIGN KEY (id_obat)
-        REFERENCES obat(id_obat)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
--- =====================================================
--- 9. TABEL ULASAN
--- Menyimpan penilaian pasien terhadap dokter
--- =====================================================
 
-CREATE TABLE IF NOT EXISTS ulasan (
-    id_ulasan BIGSERIAL PRIMARY KEY,
 
-    id_pasien BIGINT NOT NULL,
-    id_dokter BIGINT,
+-- =============================================================
+-- 8. TABEL PRESCRIPTIONS
+-- Menyimpan informasi utama resep yang dibuat dokter.
+-- =============================================================
 
-    rating INT NOT NULL
+CREATE TABLE IF NOT EXISTS prescriptions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    medical_record_id BIGINT NOT NULL UNIQUE
+        REFERENCES medical_records(id) ON DELETE RESTRICT,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'waiting'
+        CHECK (status IN ('waiting', 'ready', 'collected')),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- =============================================================
+-- 9. TABEL PRESCRIPTION_ITEMS
+-- Menyimpan rincian obat dalam satu resep.
+-- Satu resep dapat memiliki beberapa jenis obat.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS prescription_items (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    prescription_id BIGINT NOT NULL
+        REFERENCES prescriptions(id) ON DELETE CASCADE,
+
+    medicine_id BIGINT NOT NULL
+        REFERENCES medicines(id) ON DELETE RESTRICT,
+
+    quantity INTEGER NOT NULL
+        CHECK (quantity > 0),
+
+    CONSTRAINT uq_prescription_medicine
+        UNIQUE (prescription_id, medicine_id)
+);
+
+
+-- 10. TABEL FEEDBACK
+-- Menyimpan penilaian dan komentar pasien terhadap layanan.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    patient_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE RESTRICT,
+
+    rating SMALLINT NOT NULL
         CHECK (rating BETWEEN 1 AND 5),
 
-    komentar TEXT,
+    comment TEXT,
+    public_consent BOOLEAN NOT NULL DEFAULT FALSE,
+    public_status VARCHAR(20) NOT NULL DEFAULT 'private'
+        CHECK (public_status IN ('private', 'pending', 'approved', 'rejected')),
 
-    dibuat_pada TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-    CONSTRAINT fk_ulasan_pasien
-        FOREIGN KEY (id_pasien)
-        REFERENCES pengguna(id_pengguna),
+ALTER TABLE feedback
+    ADD COLUMN IF NOT EXISTS public_consent BOOLEAN NOT NULL DEFAULT FALSE;
 
-    CONSTRAINT fk_ulasan_dokter
-        FOREIGN KEY (id_dokter)
-        REFERENCES pengguna(id_pengguna),
+ALTER TABLE feedback
+    ADD COLUMN IF NOT EXISTS public_status VARCHAR(20) NOT NULL DEFAULT 'private';
 
-    CONSTRAINT unik_ulasan_pasien_dokter
-        UNIQUE (id_pasien, id_dokter)
+CREATE INDEX IF NOT EXISTS idx_feedback_public_created_at
+    ON feedback (created_at DESC)
+    WHERE public_consent = TRUE AND public_status = 'approved';
+
+
+-- =============================================================
+-- 11. TABEL NOTIFICATIONS
+-- Menyimpan pemberitahuan untuk pengguna aplikasi.
+-- Contoh: janji temu disetujui atau resep siap diambil.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    title VARCHAR(160) NOT NULL,
+    message TEXT NOT NULL,
+
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
--- =====================================================
--- 10. DATA AWAL POLI
--- =====================================================
+-- =============================================================
+-- 12. INDEX TAMBAHAN
+-- Membantu mempercepat proses pencarian data.
+-- =============================================================
 
-INSERT INTO poli (nama_poli, deskripsi) VALUES
+CREATE INDEX IF NOT EXISTS idx_users_role
+ON users (role);
+
+CREATE INDEX IF NOT EXISTS idx_prescriptions_status
+ON prescriptions (status);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
+ON notifications (user_id, is_read, created_at DESC);
+
+
+-- =============================================================
+-- 13. DML: MEMASUKKAN DATA AWAL POLI
+-- =============================================================
+
+INSERT INTO poli (name, description)
+VALUES
 (
     'Poli Umum',
     'Pemeriksaan kesehatan dasar dan konsultasi keluhan umum.'
@@ -294,69 +339,248 @@ INSERT INTO poli (nama_poli, deskripsi) VALUES
     'Layanan kesehatan dan tumbuh kembang anak.'
 ),
 (
+    'Poli Jantung',
+    'Pemeriksaan dan konsultasi kesehatan jantung.'
+),
+(
     'Poli Penyakit Dalam',
-    'Konsultasi dan penanganan penyakit organ dalam.'
+    'Diagnosis dan penanganan penyakit organ dalam.'
+),
+(
+    'Poli Kandungan',
+    'Layanan kesehatan ibu dan reproduksi.'
+),
+(
+    'Poli Mata',
+    'Pemeriksaan dan perawatan kesehatan mata.'
+),
+(
+    'Poli Saraf',
+    'Konsultasi gangguan saraf dan neurologis.'
 )
-ON CONFLICT (nama_poli) DO NOTHING;
+ON CONFLICT (name) DO NOTHING;
 
 
--- =====================================================
--- 11. DATA AWAL OBAT
--- =====================================================
+-- =============================================================
+-- 14. DML: MEMASUKKAN DATA AWAL OBAT
+-- =============================================================
 
-INSERT INTO obat (
-    nama_obat,
-    deskripsi,
-    jenis_obat,
-    stok,
-    tanggal_kedaluwarsa
+INSERT INTO medicines (
+    name,
+    description,
+    medicine_type,
+    stock,
+    expires_at
 )
 VALUES
 (
     'Paracetamol 500 mg',
     'Obat pereda nyeri dan penurun demam.',
-    'biasa',
-    100,
+    'ordinary',
+    120,
     '2027-12-31'
 ),
 (
     'Amoxicillin 500 mg',
     'Antibiotik sesuai resep dokter.',
-    'keras',
-    50,
-    '2027-10-31'
+    'prescription',
+    80,
+    '2027-09-30'
 ),
 (
     'Vitamin C 500 mg',
     'Suplemen vitamin C.',
-    'biasa',
-    80,
-    '2028-02-28'
+    'ordinary',
+    75,
+    '2028-03-31'
+),
+(
+    'Omeprazole 20 mg',
+    'Obat untuk menurunkan produksi asam lambung.',
+    'prescription',
+    50,
+    '2027-06-30'
 )
-ON CONFLICT (nama_obat) DO NOTHING;
+ON CONFLICT (name) DO NOTHING;
 
 
--- =====================================================
--- 12. AKUN ADMIN AWAL
--- Password disimpan dalam bentuk hash bcrypt
--- =====================================================
+-- =============================================================
+-- 15. PEMERIKSAAN DATABASE
+-- Menampilkan seluruh tabel dan keterangan fungsinya.
+-- =============================================================
 
-INSERT INTO pengguna (
-    nama_pengguna,
-    email,
-    hash_kata_sandi,
-    peran
-)
-VALUES (
-    'Administrator',
-    'admin@medikacare.local',
-    crypt('Admin123!', gen_salt('bf', 12)),
-    'admin'
-)
-ON CONFLICT (email) DO NOTHING;
+SELECT
+    table_name,
+    obj_description(
+        (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass,
+        'pg_class'
+    ) AS keterangan_tabel
+FROM information_schema.tables
+WHERE table_schema = 'public'
+AND table_type = 'BASE TABLE'
+ORDER BY table_name;
 
 
--- =====================================================
+-- =============================================================
 -- SELESAI
--- DATABASE MEDIKACARE BERHASIL DIDEFINISIKAN
--- =====================================================
+-- Struktur database MedCare Hospital berhasil dibuat.
+--
+-- LANGKAH SELANJUTNYA:
+-- Jalankan perintah berikut pada terminal project:
+--
+-- npm run seed
+--
+-- Perintah tersebut akan membuat akun demo, jadwal dokter,
+-- serta melengkapi data awal poli dan obat.
+-- =============================================================
+
+
+
+
+
+
+
+-- =============================================================
+-- MEDCARE HOSPITAL | DIGITALISASI RUMAH SAKIT
+-- FILE        : seed.sql
+-- DBMS        : PostgreSQL
+-- Tujuan      : Memasukkan data awal untuk pengujian aplikasi
+-- =============================================================
+
+
+-- =============================================================
+-- 1. DATA AWAL POLI
+-- Menyediakan daftar poli yang dapat digunakan pasien
+-- dan dikaitkan dengan dokter.
+-- =============================================================
+
+INSERT INTO poli (name, description)
+VALUES
+(
+    'Poli Umum',
+    'Pemeriksaan kesehatan dasar dan konsultasi keluhan umum.'
+),
+(
+    'Poli Gigi',
+    'Pemeriksaan dan perawatan kesehatan gigi dan mulut.'
+),
+(
+    'Poli Anak',
+    'Layanan kesehatan dan tumbuh kembang anak.'
+),
+(
+    'Poli Jantung',
+    'Pemeriksaan dan konsultasi kesehatan jantung.'
+),
+(
+    'Poli Penyakit Dalam',
+    'Diagnosis dan penanganan penyakit organ dalam.'
+),
+(
+    'Poli Kandungan',
+    'Layanan kesehatan ibu dan reproduksi.'
+),
+(
+    'Poli Mata',
+    'Pemeriksaan dan perawatan kesehatan mata.'
+),
+(
+    'Poli Saraf',
+    'Konsultasi gangguan saraf dan neurologis.'
+)
+ON CONFLICT (name) DO NOTHING;
+
+
+-- =============================================================
+-- 2. DATA AWAL OBAT
+-- Menyediakan katalog obat untuk kebutuhan pengujian farmasi.
+-- =============================================================
+
+INSERT INTO medicines (
+    name,
+    description,
+    medicine_type,
+    stock,
+    expires_at
+)
+VALUES
+(
+    'Paracetamol 500 mg',
+    'Obat pereda nyeri dan penurun demam.',
+    'ordinary',
+    120,
+    '2027-12-31'
+),
+(
+    'Amoxicillin 500 mg',
+    'Antibiotik sesuai resep dokter.',
+    'prescription',
+    80,
+    '2027-09-30'
+),
+(
+    'Vitamin C 500 mg',
+    'Suplemen vitamin C.',
+    'ordinary',
+    75,
+    '2028-03-31'
+),
+(
+    'Omeprazole 20 mg',
+    'Obat untuk menurunkan produksi asam lambung.',
+    'prescription',
+    50,
+    '2027-06-30'
+)
+ON CONFLICT (name) DO NOTHING;
+
+
+-- =============================================================
+-- 3. PEMERIKSAAN DATA POLI
+-- Menampilkan daftar poli yang berhasil tersedia.
+-- =============================================================
+
+SELECT
+    id,
+    name,
+    description,
+    is_active
+FROM poli
+ORDER BY id;
+
+
+-- =============================================================
+-- 4. PEMERIKSAAN DATA OBAT
+-- Menampilkan daftar obat yang berhasil tersedia.
+-- =============================================================
+
+SELECT
+    id,
+    name,
+    medicine_type,
+    stock,
+    expires_at,
+    is_active
+FROM medicines
+ORDER BY id;
+
+-- Foto dokter demo disimpan di public/doctors dan dicocokkan berdasarkan nama.
+UPDATE users SET image_url = '/doctors/01_andi_saputra.png'
+WHERE role = 'doctor' AND full_name = 'dr. Andi Saputra';
+
+UPDATE users SET image_url = '/doctors/02_siti_rahmawati.png'
+WHERE role = 'doctor' AND full_name = 'dr. Siti Rahmawati';
+
+UPDATE users SET image_url = '/doctors/03_budi_santoso.png'
+WHERE role = 'doctor' AND full_name = 'dr. Budi Santoso, Sp.PD';
+
+UPDATE users SET image_url = '/doctors/04_rina_anggraini.png'
+WHERE role = 'doctor' AND full_name = 'dr. Rina Anggraini, Sp.KG';
+
+UPDATE users SET image_url = '/doctors/05_muhammad_fajar.png'
+WHERE role = 'doctor' AND full_name = 'dr. Muhammad Fajar';
+
+-- =============================================================
+-- SELESAI
+-- Data awal MedCare Hospital berhasil disiapkan.
+-- =============================================================
