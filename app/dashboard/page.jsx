@@ -123,11 +123,13 @@ export default function DashboardPage() {
           poli: api("/api/poli"),
           doctors: api("/api/doctors"),
           schedules: api("/api/schedules"),
-          medicines: api("/api/medicines"),
           records: api("/api/medical-records"),
           prescriptions: api("/api/prescriptions"),
           notifications: api("/api/notifications"),
         };
+        if (role === "admin" || role === "doctor") {
+          requests.medicines = api("/api/medicines");
+        }
         if (role === "admin") {
           requests.users = api("/api/users");
           requests.overview = api("/api/admin/overview");
@@ -136,10 +138,7 @@ export default function DashboardPage() {
           requests.users = api("/api/appointments");
         }
         const pairs = await Promise.all(
-          Object.entries(requests).map(async ([k, p]) => {
-            if (role === "admin" && k === "feedback") return [k, await p];
-            return [k, await p.catch(() => ({ data: [] }))];
-          }),
+          Object.entries(requests).map(async ([k, p]) => [k, await p]),
         );
         setData(Object.fromEntries(pairs.map(([k, v]) => [k, v.data || []])));
       } catch (e) {

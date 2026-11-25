@@ -36,7 +36,7 @@ Di pgAdmin, buka Query Tool pada server PostgreSQL lalu jalankan:
 CREATE DATABASE medcare_hospital;
 ```
 
-Pilih database `medcare_hospital`, buka Query Tool, lalu buka dan jalankan `database/schema.sql`.
+Pilih database `medcare_hospital`, buka Query Tool, lalu buka dan jalankan `database/database.sql`.
 
 ## 3. Instal dependensi dan data contoh
 
